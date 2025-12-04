@@ -8,9 +8,11 @@ all: call_rdrand crosstalk
 
 call_rdrand-obj = $(addprefix ${BUILD}/, src/call_rdrand_core0.o)
 crosstalk-obj = $(addprefix ${BUILD}/, src/leaker_core1.o)
+fpvi-obj = $(addprefix ${BUILD}/, src/fpvi.o)
 
 deps += $(call_rdrand-obj:.o=.d)
 deps += $(crosstalk-obj:.o=.d)
+deps += $(fpvi-obj:.o=.d)
 
 -include ${deps}
 
@@ -26,10 +28,16 @@ crosstalk: ${crosstalk-obj}
 	@${CC} ${crosstalk-obj} -o $@ ${LDFLAGS} ${CFLAGS}
 	@rm -rf $(BUILD)
 
+fpvi: ${fpvi-obj}
+	@echo "LD $(notdir $@)"
+	@mkdir -p "$(dir $@)"
+	@${CC} ${fpvi-obj} -o $@ ${LDFLAGS} ${CFLAGS}
+	@rm -rf $(BUILD)
+
 $(BUILD)/%.o: %.c
 	@echo "CC $<"
 	@mkdir -p "$(dir $@)"
 	@${CC} -c $< -o $@ ${CFLAGS} -MT $@ -MMD -MP -MF $(@:.o=.d)
 
 clean:
-	@rm -f call_rdrand crosstalk
+	@rm -f call_rdrand crosstalk fpvi
